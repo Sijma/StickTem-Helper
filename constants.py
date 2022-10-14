@@ -201,3 +201,4 @@ stickers = {
     199: "Zizare"
 }
 
+default_timeout = 600

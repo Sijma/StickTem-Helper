@@ -110,6 +110,27 @@ def get_true_indices(array):
     return [i for i, x in enumerate(array) if x]
 
 
+def get_owned_stickers_list_string(stickers):
+    indices = get_true_indices(stickers)
+    if len(indices) == 0:
+        return "None"
+    first_string = ""
+    active_string = first_string
+    string_changed = False
+    for index in indices:
+        value = constants.stickers.get(index)
+        if not string_changed and len(active_string + value) > 1024:
+            string_changed = True
+            first_string = active_string
+            active_string = ""
+        active_string += value
+        if index != indices[-1]:
+            active_string += "\n"
+    if string_changed:
+        return [first_string, active_string]
+    return active_string
+
+
 def get_sticker_name_by_id(sticker_id):
     return constants.stickers.get(sticker_id)
 
@@ -119,3 +140,18 @@ def format_sticker_matches(sticker_list, amount):
     for i in range(1, amount):
         final_string += f", {constants.stickers.get(int(sticker_list[i]))}"
     return final_string
+
+
+def format_sticker_type_string(type_string):
+    new_string = type_string.replace("_", " ")
+    new_string = new_string.title()
+    return new_string
+
+
+def new_active_view(new_view):
+    user = new_view.user
+    if user.active_view is not None:
+        user.active_view.active = False
+        user.active_view.clear_items()
+        user.active_view.stop()
+    user.active_view = new_view

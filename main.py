@@ -1,6 +1,7 @@
 import discord
 import config
 import helpers
+import constants
 
 from discord import app_commands, Embed
 from discord.ui import View, Select
@@ -33,6 +34,7 @@ class User:
         doc = helpers.database_init(user_id)
 
         self.data = doc
+        self.active_view = None
 
         self.unsaved = False
 
@@ -53,11 +55,12 @@ class SelectionMenu(View):
     def __init__(self, user, sticker_type):
         super().__init__()
 
-        self.timeout = 300
-
         self.user = user
         self.sticker_type = sticker_type
         self.current_page = 1
+        
+        self.active = True
+        self.timeout = constants.default_timeout
 
         self.embed = Embed(title=f"Select {select_text_dict.get(sticker_type)}", description=f"Use the arrows to navigate the pages.\n\nPress **\"Submit\"** to save your settings when you're done adding everything!", colour=discord.Color.blue())
         self.embed.set_thumbnail(url=bot.user.avatar.url)
@@ -68,6 +71,12 @@ class SelectionMenu(View):
 
         submit_button = [x for x in self.children if x.custom_id == "submit_button"][0]
         submit_button.disabled = not self.user.unsaved
+
+        helpers.new_active_view(self)
+
+    async def on_timeout(self) -> None:
+        if self.active:
+            await self.user.message.edit(view=None, embed=timeout_embed)
 
     async def select_callback(self, interaction):
         range_high = self.current_page * 25
@@ -110,16 +119,77 @@ class SelectionMenu(View):
         await interaction.response.edit_message(view=self)
 
 
+def update_view_stickers_embed(embed, user, stickers_type, index):
+    sticker_list = helpers.get_owned_stickers_list_string(user.data[stickers_type])
+
+    display_string = helpers.format_sticker_type_string(stickers_type)
+
+    if isinstance(sticker_list, list):
+        embed.insert_field_at(index=index, name=display_string+" 1/2", value=sticker_list[0], inline=True)
+        embed.insert_field_at(index=index+3, name=display_string+" 2/2", value=sticker_list[1], inline=True)
+    else:
+        embed.insert_field_at(index=index, name=display_string, value=sticker_list, inline=True)
+        embed.insert_field_at(index=index + 3, name='\u200B', value='\u200B', inline=True)
+
+    return embed
+
+
+class ViewStickers(View):
+    def __init__(self, user):
+        super().__init__()
+        
+        self.user = user
+
+        self.active = True
+        self.timeout = constants.default_timeout
+        
+        self.embed_1 = Embed(title="Stickers List", colour=discord.Color.blue())
+        self.embed_1.set_thumbnail(url=bot.user.avatar.url)
+
+        self.embed_1 = update_view_stickers_embed(self.embed_1, user, "have_mint", 0)
+        self.embed_1 = update_view_stickers_embed(self.embed_1, user, "need_mint", 1)
+
+        self.embed_1.insert_field_at(index=2, name='\u200B', value='\u200B', inline=True)
+        self.embed_1.add_field(name='\u200B', value='\u200B', inline=True)
+
+        self.embed_2 = Embed(colour=discord.Color.blue())
+
+        self.embed_2 = update_view_stickers_embed(self.embed_2, user, "have_damaged", 0)
+        self.embed_2 = update_view_stickers_embed(self.embed_2, user, "need_damaged", 1)
+
+        self.embed_2.insert_field_at(index=2, name='\u200B', value='\u200B', inline=True)
+        self.embed_2.add_field(name='\u200B', value='\u200B', inline=True)
+
+        self.embed = [self.embed_1, self.embed_2]
+
+        helpers.new_active_view(self)
+
+    async def on_timeout(self) -> None:
+        if self.active:
+            await self.user.message.edit(view=None, embed=timeout_embed)
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.danger, custom_id="back_button")
+    async def back_callback(self, interaction, button):
+        await main_menu(interaction, self.user, True)
+
+
 class MatchMenu(View):
     def __init__(self, user, matches):
         super().__init__()
 
-        self.timeout = 300
+        self.active = True
+        self.timeout = constants.default_timeout
 
         self.user = user
         self.matches = matches
         self.current_page = 0
         self.embeds = []
+
+        helpers.new_active_view(self)
+
+    async def on_timeout(self) -> None:
+        if self.active:
+            await self.user.message.edit(view=None, embed=timeout_embed)
 
     def new_embed_base(self, number):
         embed = Embed(title=f"Match Results {number}/{len(self.matches)}", colour=discord.Color.blue())
@@ -173,14 +243,18 @@ class MainMenu(View):
     def __init__(self, user):
         super().__init__()
 
-        self.timeout = 300
+        self.active = True
+        self.timeout = constants.default_timeout
 
         self.user = user
-        self.embed = Embed(title="Welcome to StickTem! Helper", description="You can use this bot to help you manage your sticker collection and find trading partners!", colour=discord.Color.blue())
+        self.embed = Embed(title="Welcome to StickTem! Helper", description="You can use this bot to help you manage your sticker collection and find trading partners!\n\nFor any feedback or issues, please contact: **Sijma#2205**", colour=discord.Color.blue())
         self.embed.set_thumbnail(url=bot.user.avatar.url)
 
+        helpers.new_active_view(self)
+
     async def on_timeout(self) -> None:
-        await self.user.message.edit(view=None, embed=timeout_embed)
+        if self.active:
+            await self.user.message.edit(view=None, embed=timeout_embed)
 
     @discord.ui.button(label="Have Mint", style=discord.ButtonStyle.primary, custom_id="have_mint")
     async def callback1(self, interaction, button):
@@ -202,7 +276,12 @@ class MainMenu(View):
         selection_menu = SelectionMenu(self.user, button.custom_id)
         await interaction.response.edit_message(view=selection_menu, embed=selection_menu.embed)
 
-    @discord.ui.button(label="Find Matches", style=discord.ButtonStyle.green, custom_id="find_matches_button")
+    @discord.ui.button(label="View Stickers", style=discord.ButtonStyle.green, custom_id="view_stickers")
+    async def callback5(self, interaction, button):
+        view_stickers = ViewStickers(self.user)
+        await interaction.response.edit_message(view=view_stickers, embeds=view_stickers.embed)
+
+    @discord.ui.button(label="Find Matches", style=discord.ButtonStyle.red, custom_id="find_matches_button")
     async def find_callback(self, interaction, button):
         helpers.disable_all_children(self)
         button.label = "Loading.."
@@ -218,6 +297,7 @@ class MainMenu(View):
 
 async def main_menu(interaction, user, edit):
     menu = MainMenu(user)
+    # helpers.new_active_view(menu)
     if edit:
         await interaction.response.edit_message(embed=menu.embed, view=menu)
     else:
